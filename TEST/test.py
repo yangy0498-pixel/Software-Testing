@@ -9,6 +9,7 @@ Measures Computed: ONLY E-measure and P-measure
 =============================================================================
 """
 
+import csv
 import importlib.util
 import math
 import os
@@ -25,6 +26,7 @@ import mr2
 BASE_DIR = os.path.dirname(TEST_DIR)
 SUT_PATH = os.path.join(BASE_DIR, "SUT", "manhattan_distance.py")
 MUTANTS_DIR = os.path.join(BASE_DIR, "MUTANTS")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
 
 def load_module(file_path: str, module_name: str):
@@ -108,12 +110,8 @@ def run_lecture_slide_table():
     print("\n[Legend: 'X' = Mutant KILLED (violates MR =/=), '.' = Mutant SURVIVED (satisfies MR ==)]")
 
 
-def run_detailed_mutant_eval_table():
-    """
-    Prints detailed output comparisons matching the lecture slide table:
-    [Source test case | Follow-up test case | Relation | SUT | M1 output | M2 output | ...]
-    Shows the exact numeric evaluated expressions: e.g. '31 == 31' or '31 =/= -31'
-    """
+def write_detailed_csvs():
+    """Write complete source/follow-up comparisons for all mutants to Excel-friendly CSVs."""
     sut_mod = load_module(SUT_PATH, "sut")
     sut_func = sut_mod.manhattan_distance
 
@@ -123,54 +121,41 @@ def run_detailed_mutant_eval_table():
         mod = load_module(m_file, f"mutant{i}")
         mutant_funcs[i] = mod.manhattan_distance
 
-    print("\n" + "=" * 120)
-    print("DETAILED METAMORPHIC & MUTATION EXECUTION OUTPUTS (LECTURE SLIDE FORMAT)")
-    print("=" * 120)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    test_suites = [
+        ("mr1", "MR1: Symmetry", mr1.MR1_MTGS),
+        ("mr2", "MR2: Shift Invariance", mr2.MR2_MTGS),
+    ]
+    headers = [
+        "MTG", "Metamorphic Relation", "Source Point A", "Source Point B",
+        "Follow-up Point A", "Follow-up Point B", "Shift c",
+        "SUT Comparison",
+    ] + [f"M{i} Comparison" for i in range(1, 31)]
 
-    # Key killed mutants to display in detailed table
-    key_mutants_mr1 = [1, 2, 6, 13, 19, 24, 25, 26, 27, 28, 29, 30]
-    print("\n--- MR1: SYMMETRY (dist(A, B) == dist(B, A)) ---")
-    hdr = f"{'MTG':<8} | {'Source Case':<20} | {'Follow-up Case':<20} | {'SUT':<12} | " + " | ".join([f"M{m} Output" for m in key_mutants_mr1])
-    print(hdr)
-    print("-" * len(hdr))
-
-    for mtg in mr1.MR1_MTGS:
-        pA, pB = mtg["source"]
-        pA_f, pB_f = mtg["follow_up"]
-        s_src = eval_func_pair(sut_func, pA, pB)
-        s_fol = eval_func_pair(sut_func, pA_f, pB_f)
-        s_str, _ = format_rel(s_src, s_fol)
-
-        m_vals = []
-        for m in key_mutants_mr1:
-            m_src = eval_func_pair(mutant_funcs[m], pA, pB)
-            m_fol = eval_func_pair(mutant_funcs[m], pA_f, pB_f)
-            m_str, _ = format_rel(m_src, m_fol)
-            m_vals.append(f"{m_str:<10}")
-
-        print(f"{mtg['name']:<8} | {str(list(pA))+', '+str(list(pB)):<20} | {str(list(pA_f))+', '+str(list(pB_f)):<20} | {s_str:<12} | " + " | ".join(m_vals))
-
-    key_mutants_mr2 = [1, 2, 6, 13, 17, 18, 19, 23, 26, 27, 28, 29, 30]
-    print("\n--- MR2: SHIFT INVARIANCE (dist(A, B) == dist(A+c, B+c)) ---")
-    hdr2 = f"{'MTG':<8} | {'Shift c':<8} | {'SUT':<12} | " + " | ".join([f"M{m} Output" for m in key_mutants_mr2])
-    print(hdr2)
-    print("-" * len(hdr2))
-
-    for mtg in mr2.MR2_MTGS:
-        pA, pB = mtg["source"]
-        pA_f, pB_f = mtg["follow_up"]
-        s_src = eval_func_pair(sut_func, pA, pB)
-        s_fol = eval_func_pair(sut_func, pA_f, pB_f)
-        s_str, _ = format_rel(s_src, s_fol)
-
-        m_vals = []
-        for m in key_mutants_mr2:
-            m_src = eval_func_pair(mutant_funcs[m], pA, pB)
-            m_fol = eval_func_pair(mutant_funcs[m], pA_f, pB_f)
-            m_str, _ = format_rel(m_src, m_fol)
-            m_vals.append(f"{m_str:<10}")
-
-        print(f"{mtg['name']:<8} | {mtg['shift_c']:<8} | {s_str:<12} | " + " | ".join(m_vals))
+    for relation_id, relation_name, mtgs in test_suites:
+        output_path = os.path.join(OUTPUT_DIR, f"{relation_id}_results.csv")
+        with open(output_path, "w", newline="", encoding="utf-8-sig") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(headers)
+            for mtg in mtgs:
+                pA, pB = mtg["source"]
+                pA_f, pB_f = mtg["follow_up"]
+                sut_source = eval_func_pair(sut_func, pA, pB)
+                sut_followup = eval_func_pair(sut_func, pA_f, pB_f)
+                sut_comparison, _ = format_rel(sut_source, sut_followup)
+                row = [
+                    mtg["name"], relation_name, list(pA), list(pB),
+                    list(pA_f), list(pB_f), mtg.get("shift_c", ""),
+                    sut_comparison,
+                ]
+                for mutant_id in range(1, 31):
+                    mutant_func = mutant_funcs[mutant_id]
+                    source_output = eval_func_pair(mutant_func, pA, pB)
+                    followup_output = eval_func_pair(mutant_func, pA_f, pB_f)
+                    comparison, _ = format_rel(source_output, followup_output)
+                    row.append(comparison)
+                writer.writerow(row)
+        print(f"Detailed {relation_id.upper()} results: {output_path}")
 
 
 def run_full_evaluation():
@@ -240,5 +225,5 @@ def run_full_evaluation():
 
 if __name__ == "__main__":
     run_lecture_slide_table()
-    run_detailed_mutant_eval_table()
+    write_detailed_csvs()
     run_full_evaluation()
